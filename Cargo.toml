@@ -118,7 +118,9 @@ toml = "1.1"
 url = "2.5.7"
 walkdir = "2.5.0"
 webgpu-shim = { path = "webgpu-shim", version = "0.1" }
-wgpu = { version = "30.0.0" }
+# Must be the exact wgpu revision the host shell is built against, otherwise the
+# `wgpu::Device`/`Texture` types passed between host and renderer are distinct.
+wgpu = { git = "https://github.com/gfx-rs/wgpu.git", rev = "014d9e84813a2946febfa4888694c0b70565b2f5", default-features = false, features = ["std", "wgsl"] }
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"

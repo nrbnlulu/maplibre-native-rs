@@ -1202,6 +1202,10 @@ pub mod ffi {
         fn setDebugFlags(self: Pin<&mut MapRenderer>, flags: MapDebugOptions);
         /// Jumps to the requested camera options.
         fn jumpTo(self: Pin<&mut MapRenderer>, camera: &FfiCameraOptions);
+        fn easeTo(self: Pin<&mut MapRenderer>, camera: &FfiCameraOptions, durationSeconds: f64);
+        fn getCameraOptions(self: &MapRenderer) -> FfiCameraOptions;
+        fn getRenderedCameraOptions(self: &MapRenderer) -> FfiCameraOptions;
+        fn cancelCameraTransitions(self: Pin<&mut MapRenderer>);
         /// Moves the camera by the given delta.
         fn moveBy(self: Pin<&mut MapRenderer>, delta: &ScreenCoordinate);
         /// Scales the camera based on the given scale factor.

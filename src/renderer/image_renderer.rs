@@ -14,8 +14,8 @@ use crate::bridge::ffi::BridgeImage;
 use crate::renderer::map_observer::MapObserverCallbacks;
 use crate::renderer::{MapDebugOptions, MapLoadError, MapLoadErrorKind};
 use crate::{
-    CameraUpdate, EdgeInsets, GeoJson, LatLng, LatLngBounds, RunLoopHandle, ScreenCoordinate, Size,
-    StyleRef,
+    CameraState, CameraUpdate, EdgeInsets, GeoJson, LatLng, LatLngBounds, RunLoopHandle,
+    ScreenCoordinate, Size, StyleRef,
 };
 
 /// A rendered map image.
@@ -256,6 +256,17 @@ impl<S> ImageRenderer<S> {
     #[cfg(feature = "wgpu")]
     /// Bind the renderer to the WGPU device and queue provided by the host UI. So Textures between maplibre-native and a rust application can be shared
     pub fn set_device_queue(&mut self, device: wgpu::Device, queue: wgpu::Queue) {
+        self.instance.pin_mut().setDeviceAndQueue(device.into(), queue.into());
+    }
+
+    #[cfg(feature = "wgpu")]
+    /// Like [`set_device_queue`](Self::set_device_queue), for hosts that share their queue and
+    /// must serialize access to it: every queue operation goes through `queue`.
+    pub fn set_device_queue_ops(
+        &mut self,
+        device: wgpu::Device,
+        queue: std::sync::Arc<dyn webgpu_shim::QueueOps>,
+    ) {
         self.instance.pin_mut().setDeviceAndQueue(device.into(), queue.into());
     }
 
@@ -573,6 +584,26 @@ impl ImageRenderer<Continuous> {
     /// Important: Without setting the camera initially no image will be generated!
     pub fn update_camera(&mut self, camera: &CameraUpdate) {
         self.instance.pin_mut().jumpTo(&camera.to_camera_options());
+    }
+
+    /// Animates the camera using MapLibre Native's transition engine.
+    pub fn ease_camera(&mut self, camera: &CameraUpdate, duration: std::time::Duration) {
+        self.instance.pin_mut().easeTo(&camera.to_camera_options(), duration.as_secs_f64());
+    }
+
+    /// Returns the camera position at this point in a native transition.
+    pub fn camera_state(&self) -> Option<CameraState> {
+        CameraState::from_options(self.instance.getCameraOptions())
+    }
+
+    /// Camera snapshot used by the most recent `render_once` call.
+    pub fn rendered_camera_state(&self) -> Option<CameraState> {
+        CameraState::from_options(self.instance.getRenderedCameraOptions())
+    }
+
+    /// Stops the current native camera transition at its present position.
+    pub fn cancel_camera_transition(&mut self) {
+        self.instance.pin_mut().cancelCameraTransitions();
     }
 
     /// Move map by

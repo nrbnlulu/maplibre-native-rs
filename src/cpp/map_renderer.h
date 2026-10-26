@@ -274,6 +274,7 @@ public:
 #if !defined(__APPLE__) || defined(MLN_DARWIN_USE_LIBUV)
         currentThreadRunLoopTick();
 #endif
+        renderedCamera = map->getCameraOptions();
         frontend->renderFrame();
     }
 
@@ -314,6 +315,10 @@ public:
     }
 
     void jumpTo(const FfiCameraOptions& cameraOptions);
+    void easeTo(const FfiCameraOptions& cameraOptions, double durationSeconds);
+    FfiCameraOptions getCameraOptions() const;
+    FfiCameraOptions getRenderedCameraOptions() const;
+    void cancelCameraTransitions() { map->cancelTransitions(); }
 
     void moveBy(const mln::ScreenCoordinate& delta) {
         map->moveBy(delta);
@@ -346,6 +351,7 @@ public:
     // Declared before `map` so the map never outlives it.
     std::shared_ptr<mln::FileSource> databaseFileSource;
     std::unique_ptr<mln::Map> map;
+    mln::CameraOptions renderedCamera;
 };
 
 class RenderRequest {

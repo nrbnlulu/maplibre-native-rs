@@ -55,7 +55,44 @@ fn unsupported_webgpu_function(function: &str) -> ! {
 }
 
 pub struct WGPUDeviceImpl(wgpu::Device);
-pub struct WGPUQueueImpl(wgpu::Queue);
+/// The queue operations the shim issues.
+///
+/// Hosts that share their queue with other GPU users (and so must serialize
+/// access to it) implement this instead of handing over a raw `wgpu::Queue`.
+pub trait QueueOps: Send + Sync {
+    /// Submits command buffers.
+    fn submit(&self, commands: Vec<wgpu::CommandBuffer>);
+    /// Stages a buffer write.
+    fn write_buffer(&self, buffer: &wgpu::Buffer, offset: wgpu::BufferAddress, data: &[u8]);
+    /// Stages a texture write.
+    fn write_texture(
+        &self,
+        texture: wgpu::TexelCopyTextureInfo<'_>,
+        data: &[u8],
+        layout: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    );
+}
+
+impl QueueOps for wgpu::Queue {
+    fn submit(&self, commands: Vec<wgpu::CommandBuffer>) {
+        wgpu::Queue::submit(self, commands);
+    }
+    fn write_buffer(&self, buffer: &wgpu::Buffer, offset: wgpu::BufferAddress, data: &[u8]) {
+        wgpu::Queue::write_buffer(self, buffer, offset, data);
+    }
+    fn write_texture(
+        &self,
+        texture: wgpu::TexelCopyTextureInfo<'_>,
+        data: &[u8],
+        layout: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    ) {
+        wgpu::Queue::write_texture(self, texture, data, layout, size);
+    }
+}
+
+pub struct WGPUQueueImpl(std::sync::Arc<dyn QueueOps>);
 
 impl WGPUDeviceImpl {
     pub fn to_pointer(self) -> WGPUDevice {
@@ -185,6 +222,12 @@ impl From<wgpu::Device> for WGPUDeviceWrapper {
 
 impl From<wgpu::Queue> for WGPUQueueWrapper {
     fn from(value: wgpu::Queue) -> Self {
+        Self(WGPUQueueImpl(Arc::new(value)).to_pointer())
+    }
+}
+
+impl From<Arc<dyn QueueOps>> for WGPUQueueWrapper {
+    fn from(value: Arc<dyn QueueOps>) -> Self {
         Self(WGPUQueueImpl(value).to_pointer())
     }
 }
@@ -377,11 +420,19 @@ pub unsafe extern "C" fn wgpuBufferGetMappedRange(
     let offset_u64 = u64::try_from(offset).expect("offset does not fit in u64");
 
     let mut view = if size == usize::MAX {
-        buffer_ref.0.slice(offset_u64..).get_mapped_range_mut().expect("buffer range is not mapped for writing")
+        buffer_ref
+            .0
+            .slice(offset_u64..)
+            .get_mapped_range_mut()
+            .expect("buffer range is not mapped for writing")
     } else {
         let size_u64 = u64::try_from(size).expect("size does not fit in u64");
         let end = offset_u64.checked_add(size_u64).expect("offset + size overflow");
-        buffer_ref.0.slice(offset_u64..end).get_mapped_range_mut().expect("buffer range is not mapped for writing")
+        buffer_ref
+            .0
+            .slice(offset_u64..end)
+            .get_mapped_range_mut()
+            .expect("buffer range is not mapped for writing")
     };
 
     let ptr = view.slice(..).as_raw_element_ptr().as_ptr().cast();

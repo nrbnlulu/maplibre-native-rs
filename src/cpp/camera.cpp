@@ -132,5 +132,20 @@ void MapRenderer::jumpTo(const FfiCameraOptions& cameraOptions) {
     map->jumpTo(toCameraOptions(cameraOptions));
 }
 
+void MapRenderer::easeTo(const FfiCameraOptions& cameraOptions, double durationSeconds) {
+    mln::AnimationOptions animation;
+    animation.duration = std::chrono::duration_cast<mln::Duration>(
+        std::chrono::duration<double>(durationSeconds));
+    map->easeTo(toCameraOptions(cameraOptions), animation);
+}
+
+FfiCameraOptions MapRenderer::getCameraOptions() const {
+    return fromCameraOptions(map->getCameraOptions());
+}
+
+FfiCameraOptions MapRenderer::getRenderedCameraOptions() const {
+    return fromCameraOptions(renderedCamera);
+}
+
 } // namespace bridge
 } // namespace mln

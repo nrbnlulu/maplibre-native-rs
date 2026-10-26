@@ -570,7 +570,10 @@ fn build_local(
             .is_some_and(|out| {
                 let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 // `MLN_COMMIT` may be a tag, so resolve it through the checkout too.
+                // A shallow `git fetch origin <tag>` leaves no local tag, so the tag
+                // lookup below fails; the `core-<sha>` tag name carries the sha.
                 head == MLN_COMMIT
+                    || MLN_COMMIT.strip_prefix("core-") == Some(head.as_str())
                     || Command::new("git")
                         .current_dir(&maplibre_native_dir)
                         .args(["rev-parse", &format!("{MLN_COMMIT}^{{commit}}")])

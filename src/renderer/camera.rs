@@ -1,6 +1,30 @@
 use crate::bridge::ffi::{EdgeInsets, FfiCameraOptions, LatLng};
 use crate::ScreenCoordinate;
 
+/// Camera values currently used by the native map, including mid-transition.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CameraState {
+    /// Geographic center of the rendered view.
+    pub center: LatLng,
+    /// Current zoom level.
+    pub zoom: f64,
+    /// Bearing in degrees clockwise from north.
+    pub bearing: f64,
+    /// Pitch in degrees from vertical.
+    pub pitch: f64,
+}
+
+impl CameraState {
+    pub(crate) fn from_options(options: FfiCameraOptions) -> Option<Self> {
+        (options.has_center && options.has_zoom).then_some(Self {
+            center: options.center,
+            zoom: options.zoom,
+            bearing: options.bearing,
+            pitch: options.pitch,
+        })
+    }
+}
+
 impl EdgeInsets {
     /// Creates equal insets for all edges.
     #[must_use]
