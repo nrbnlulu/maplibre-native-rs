@@ -304,7 +304,7 @@ fn resolve_mln_core() -> (PathBuf, Vec<PathBuf>) {
     // Returning the downloaded file, bypassing CMakeLists.txt check
     let base = extracted_path.join("vendor").join("maplibre-native-base");
     let deps = base.join("deps");
-    let include_dirs = vec![
+    let mut include_dirs = vec![
         base.join("include"),
         deps.join("geometry.hpp").join("include"),
         deps.join("geojson.hpp").join("include"),
@@ -315,6 +315,13 @@ fn resolve_mln_core() -> (PathBuf, Vec<PathBuf>) {
         // ship in their own include root.
         extracted_path.join("platform").join("default").join("include"),
     ];
+    // The public header archive omits MapLibre's internal `src/` headers, which
+    // the cxx bridge still needs (e.g. mln/gfx/offscreen_texture.hpp). Allow a
+    // cached copy of that directory to be supplied for precompiled builds.
+    println!("cargo:rerun-if-env-changed=MLN_CORE_SRC_INCLUDE_DIR");
+    if let Some(dir) = env::var_os("MLN_CORE_SRC_INCLUDE_DIR") {
+        include_dirs.push(PathBuf::from(dir));
+    }
     (library_file, include_dirs)
 }
 
@@ -362,6 +369,19 @@ fn build_bridge(
     if matches!(backend, GraphicsApi::WGPU) {
         build.flag_if_supported("-DMLN_WEBGPU_IMPL_FFI=1");
         build.flag_if_supported("-DMLN_WEBGPU_IMPL_WGPU=1");
+        #[cfg(feature = "wgpu")]
+        {
+            // MLN's webgpu headers include <webgpu/webgpu.h> and <webgpu.hpp>.
+            // Source builds take these from the cmake-generated webgpu-cpp
+            // directory; the precompiled path reads the cached copy supplied
+            // via MLN_WEBGPU_CPP_INCLUDE_DIR.
+            println!("cargo:rerun-if-env-changed=MLN_WEBGPU_CPP_INCLUDE_DIR");
+            if let Some(dir) = env::var_os("MLN_WEBGPU_CPP_INCLUDE_DIR") {
+                build.include(PathBuf::from(dir));
+            }
+            // The shim supplies the flat <webgpu.h> some headers include.
+            build.include(PathBuf::from(webgpu_shim::WEBGPU_HEADER_INCLUDE_DIR));
+        }
     }
 
     // Watch the Rust side of the cxx bridge.
@@ -668,8 +688,11 @@ fn build_mln() {
     println!("cargo:rerun-if-env-changed=MLN_LOCAL_REPOSITORY");
 
     let precompiled = !env::var("MLN_PRECOMPILE").unwrap_or("0".to_string()).eq("0");
+    // Allow non-amalgamated prebuilt cores too: upstream's precompiled mode
+    // force-enabled the amalgam, but the FFI-mode WebGPU core we cache is the
+    // non-amalgamated archive plus its vendor libraries (linked manually below).
     let amalgam_lib =
-        precompiled || !env::var("MLN_CORE_LIBRARY_USE_AMALGAM").unwrap_or("0".to_string()).eq("0");
+        !env::var("MLN_CORE_LIBRARY_USE_AMALGAM").unwrap_or("0".to_string()).eq("0");
     let system_lib = !env::var("MLN_SYSTEM").unwrap_or("0".to_string()).eq("0");
     let local_repository = env::var("MLN_LOCAL_REPOSITORY").unwrap_or_default();
 
