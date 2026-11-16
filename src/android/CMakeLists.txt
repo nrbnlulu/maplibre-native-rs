@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22)
+project(maplibre_android_platform LANGUAGES C)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(NOT EXISTS "${MLN_CORE_SOURCE_DIR}/vendor/nunicode.cmake")
+    message(FATAL_ERROR "MLN_CORE_SOURCE_DIR must contain the matching MapLibre Native vendors")
+endif()
+add_library(mbgl-compiler-options INTERFACE)
+include("${MLN_CORE_SOURCE_DIR}/vendor/nunicode.cmake")

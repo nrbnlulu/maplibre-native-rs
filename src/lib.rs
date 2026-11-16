@@ -7,3 +7,6 @@ pub use renderer::*;
 pub use style::*;
 #[cfg(feature = "wgpu")]
 pub use webgpu_shim::*;
+
+#[cfg(any(target_os = "android", test))]
+mod android;
