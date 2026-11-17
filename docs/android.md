@@ -104,6 +104,7 @@ platform `HTTPFileSource` is what connects those helpers to curl.
 
 Two socket-watch edits enable writable events needed by curl. The HTTP source
 receives only a system-certificate hook. These changes are applied to generated
-sources under Cargo's `OUT_DIR`; the upstream checkout is never modified. Exact
-source matches deliberately fail the build when an upgraded core needs review.
+sources under Cargo's `OUT_DIR`; the upstream checkout is never modified. The standard
+`src/android/platform-compat.patch` is applied with `git apply`; a context mismatch
+fails the build so compatibility changes are reviewed when upgrading the core.
 The original upstream run-loop header is included directly.
