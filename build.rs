@@ -19,6 +19,9 @@
 //! To build the amalgam library [armerge](https://github.com/tux3/armerge) is required:
 //!     - `cargo install armerge`
 //!     - `sudo apt install llvm` llvm-objcopy required
+#[path = "build/android.rs"]
+mod android_platform;
+
 use downloader::{Download, Downloader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -352,6 +355,12 @@ fn build_bridge(
     if let Some(native) = android_source {
         let default = native.join("platform/default/src/mln");
         build.include(native.join("vendor/nunicode/include"));
+        build.include(native.join("platform/android/src"));
+        build.include(native.join("vendor/maplibre-native-base/deps/jni.hpp/include"));
+        build.include(root.join("src/android"));
+        let output =
+            PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("android-platform-sources");
+        build.files(android_platform::platform_sources(native, &output));
         let curl = pkg_config::Config::new()
             .statik(true)
             .cargo_metadata(false)

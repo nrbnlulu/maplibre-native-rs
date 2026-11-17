@@ -1,0 +1,18 @@
+int looperCallbackReadEvent(int fd, int events, void* data) {
+    auto impl = reinterpret_cast<RunLoop::Impl*>(data);
+    if (events & (ALOOPER_EVENT_INPUT | ALOOPER_EVENT_ERROR | ALOOPER_EVENT_HANGUP)) {
+        auto it = impl->readPoll.find(fd);
+        if (it != impl->readPoll.end()) {
+            auto callback = it->second;
+            callback(fd, RunLoop::Event::Read);
+        }
+    }
+    if (events & ALOOPER_EVENT_OUTPUT) {
+        auto it = impl->readPoll.find(fd);
+        if (it != impl->readPoll.end()) {
+            auto callback = it->second;
+            callback(fd, RunLoop::Event::Write);
+        }
+    }
+    return 1;
+}

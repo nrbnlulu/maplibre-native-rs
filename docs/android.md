@@ -93,3 +93,17 @@ build does not establish that the tests executed on a phone.
 
 The adapted C++ platform files retain MapLibre Native's BSD-2-Clause terms in
 `src/android/LICENSE-MAPLIBRE`.
+
+## Upstream platform sources
+
+The build uses the matching MapLibre Native Android `RunLoop` and default
+`HTTPFileSource` sources rather than maintaining copies in this crate. Android's
+NDK `ALooper` supplies the event loop; no Java `Looper` or Java VM is needed.
+The HTTP helpers under `src/mln/util` are already part of the native core; the
+platform `HTTPFileSource` is what connects those helpers to curl.
+
+Two socket-watch edits enable writable events needed by curl. The HTTP source
+receives only a system-certificate hook. These changes are applied to generated
+sources under Cargo's `OUT_DIR`; the upstream checkout is never modified. Exact
+source matches deliberately fail the build when an upgraded core needs review.
+The original upstream run-loop header is included directly.

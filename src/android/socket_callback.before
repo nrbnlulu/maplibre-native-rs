@@ -1,0 +1,10 @@
+int looperCallbackReadEvent(int fd, int, void* data) {
+    auto runLoopImpl = reinterpret_cast<RunLoop::Impl*>(data);
+
+    auto it = runLoopImpl->readPoll.find(fd);
+    if (it != runLoopImpl->readPoll.end()) {
+        assert(it->second);
+        it->second(fd, RunLoop::Event::Read);
+    }
+    return 1;
+}
