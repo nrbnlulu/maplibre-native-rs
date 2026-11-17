@@ -67,3 +67,42 @@
      handleError(curl_easy_setopt(handle, CURLOPT_PRIVATE, this));
      handleError(curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, error));
      handleError(curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1));
+--- a/thread.cpp
++++ b/thread.cpp
+@@ -6,15 +6,12 @@
+ #include <sys/resource.h>
+ 
+ #include <cassert>
+-#include "jni.hpp"
+ 
+ // Implementation based on Chromium's platform_thread_android.cc.
+ 
+ namespace mln {
+ namespace platform {
+ 
+-thread_local static JNIEnv* env;
+-thread_local static bool detach;
+ 
+ std::string getCurrentThreadName() {
+     char name[32] = "unknown";
+@@ -48,17 +45,10 @@
+     setpriority(PRIO_PROCESS, 0, int(priority));
+ }
+ 
+-void attachThread() {
+-    using namespace android;
+-    assert(env == nullptr);
+-    detach = attach_jni_thread(theJVM, &env, platform::getCurrentThreadName());
+-}
++// The standalone platform has no Java-backed services or registered Java VM.
++void attachThread() {}
+ 
+-void detachThread() {
+-    using namespace android;
+-    assert(env);
+-    detach_jni_thread(theJVM, &env, detach);
+-}
++void detachThread() {}
+ 
+ } // namespace platform
+ } // namespace mln

@@ -3,10 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub fn platform_sources(native: &Path, output: &Path) -> [PathBuf; 2] {
+pub fn platform_sources(native: &Path, output: &Path) -> [PathBuf; 3] {
     fs::create_dir_all(output).expect("Create Android platform output directory");
     let sources = [
         ("platform/android/src/run_loop.cpp", "run_loop.cpp"),
+        ("platform/android/src/thread.cpp", "thread.cpp"),
         ("platform/default/src/mln/storage/http_file_source.cpp", "http_file_source.cpp"),
     ];
     // Always start from upstream so a build-script rerun never reapplies the patch.
@@ -36,5 +37,5 @@ pub fn platform_sources(native: &Path, output: &Path) -> [PathBuf; 2] {
         "Cannot apply Android platform compatibility patch; review the core revision:\n{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    [output.join("run_loop.cpp"), output.join("http_file_source.cpp")]
+    [output.join("run_loop.cpp"), output.join("http_file_source.cpp"), output.join("thread.cpp")]
 }

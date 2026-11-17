@@ -96,7 +96,7 @@ The adapted C++ platform files retain MapLibre Native's BSD-2-Clause terms in
 
 ## Upstream platform sources
 
-The build uses the matching MapLibre Native Android `RunLoop` and default
+The build uses the matching MapLibre Native Android `RunLoop`, thread helpers and default
 `HTTPFileSource` sources rather than maintaining copies in this crate. Android's
 NDK `ALooper` supplies the event loop; no Java `Looper` or Java VM is needed.
 The HTTP helpers under `src/mln/util` are already part of the native core; the
@@ -107,4 +107,7 @@ receives only a system-certificate hook. These changes are applied to generated
 sources under Cargo's `OUT_DIR`; the upstream checkout is never modified. The standard
 `src/android/platform-compat.patch` is applied with `git apply`; a context mismatch
 fails the build so compatibility changes are reviewed when upgrading the core.
-The original upstream run-loop header is included directly.
+The original upstream run-loop header is included directly. The same patch makes
+thread attach/detach hooks no-ops because this platform uses no Java-backed
+services and registers no MapLibre Java VM; thread naming and priority functions
+come from upstream unchanged.
