@@ -1,0 +1,108 @@
+--- a/run_loop.cpp
++++ b/run_loop.cpp
+@@ -58,13 +58,21 @@
+     return 1;
+ }
+ 
+-int looperCallbackReadEvent(int fd, int, void* data) {
+-    auto runLoopImpl = reinterpret_cast<RunLoop::Impl*>(data);
+-
+-    auto it = runLoopImpl->readPoll.find(fd);
+-    if (it != runLoopImpl->readPoll.end()) {
+-        assert(it->second);
+-        it->second(fd, RunLoop::Event::Read);
++int looperCallbackReadEvent(int fd, int events, void* data) {
++    auto impl = reinterpret_cast<RunLoop::Impl*>(data);
++    if (events & (ALOOPER_EVENT_INPUT | ALOOPER_EVENT_ERROR | ALOOPER_EVENT_HANGUP)) {
++        auto it = impl->readPoll.find(fd);
++        if (it != impl->readPoll.end()) {
++            auto callback = it->second;
++            callback(fd, RunLoop::Event::Read);
++        }
++    }
++    if (events & ALOOPER_EVENT_OUTPUT) {
++        auto it = impl->readPoll.find(fd);
++        if (it != impl->readPoll.end()) {
++            auto callback = it->second;
++            callback(fd, RunLoop::Event::Write);
++        }
+     }
+     return 1;
+ }
+@@ -293,13 +301,12 @@
+ void RunLoop::addWatch(int fd, Event event, std::function<void(int, Event)>&& cb) {
+     MBGL_VERIFY_THREAD(tid);
+ 
+-    if (event == Event::Read) {
+-        impl->readPoll[fd] = std::move(cb);
+-
+-        ALooper* looper = ALooper_forThread();
+-        ALooper_addFd(
+-            looper, fd, ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, looperCallbackReadEvent, this->impl.get());
+-    }
++    impl->readPoll[fd] = std::move(cb);
++    int events = 0;
++    if (event == Event::Read || event == Event::ReadWrite) events |= ALOOPER_EVENT_INPUT;
++    if (event == Event::Write || event == Event::ReadWrite) events |= ALOOPER_EVENT_OUTPUT;
++    ALooper_addFd(ALooper_forThread(), fd, ALOOPER_POLL_CALLBACK, events,
++                  looperCallbackReadEvent, impl.get());
+ }
+ 
+ void RunLoop::removeWatch(int fd) {
+--- a/http_file_source.cpp
++++ b/http_file_source.cpp
+@@ -1,3 +1,4 @@
++#include "system_certificates.hpp"
+ #include <algorithm>
+ #include <mln/storage/http_file_source.hpp>
+ #include <mln/storage/resource_options.hpp>
+@@ -289,6 +290,10 @@
+         curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+     }
+ 
++    const auto& certificates = androidTrustBundle();
++    if (certificates.empty()) throw std::runtime_error("Android system trust store is empty");
++    curl_blob trust{const_cast<char*>(certificates.data()), certificates.size(), CURL_BLOB_COPY};
++    handleError(curl_easy_setopt(handle, CURLOPT_CAINFO_BLOB, &trust));
+     handleError(curl_easy_setopt(handle, CURLOPT_PRIVATE, this));
+     handleError(curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, error));
+     handleError(curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1));
+--- a/thread.cpp
++++ b/thread.cpp
+@@ -6,15 +6,12 @@
+ #include <sys/resource.h>
+ 
+ #include <cassert>
+-#include "jni.hpp"
+ 
+ // Implementation based on Chromium's platform_thread_android.cc.
+ 
+ namespace mln {
+ namespace platform {
+ 
+-thread_local static JNIEnv* env;
+-thread_local static bool detach;
+ 
+ std::string getCurrentThreadName() {
+     char name[32] = "unknown";
+@@ -48,17 +45,10 @@
+     setpriority(PRIO_PROCESS, 0, int(priority));
+ }
+ 
+-void attachThread() {
+-    using namespace android;
+-    assert(env == nullptr);
+-    detach = attach_jni_thread(theJVM, &env, platform::getCurrentThreadName());
+-}
++// The standalone platform has no Java-backed services or registered Java VM.
++void attachThread() {}
+ 
+-void detachThread() {
+-    using namespace android;
+-    assert(env);
+-    detach_jni_thread(theJVM, &env, detach);
+-}
++void detachThread() {}
+ 
+ } // namespace platform
+ } // namespace mln

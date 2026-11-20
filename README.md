@@ -74,6 +74,10 @@ The following platform and rendering-API combinations are supported and tested i
 
 [^1]: Vulkan support on macos is provided via `MoltenVK`. There is a slight performance overhead for this with little upsides. Both Metal and Vulkan run through the same extensive test suite upstream. You can use Vulkan if you find a bug in the Metal implementation until we have fixed it upstream.
 
+Android ARM64 has experimental standalone WebGPU support, without the MapLibre Java SDK.
+See the [Android build and validation guide](docs/android.md) for dependencies,
+embedding requirements and remaining limitations.
+
 ### Dependencies
 
 This command will install the required dependencies on Linux or macOS for the `vulkan` backend.
