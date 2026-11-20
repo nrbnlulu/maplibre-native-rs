@@ -28,6 +28,9 @@
 
 #include <cstdint>
 #include <cassert>
+#if defined(__ANDROID__)
+#include <android/looper.h>
+#endif
 #include <mutex>
 #include <memory>
 #include <optional>
@@ -39,9 +42,9 @@
 #include "resource_options.h"
 #include "sources/sources.h"
 
-#if (!defined(__APPLE__) || defined(MLN_DARWIN_USE_LIBUV)) && __has_include(<uv.h>)
+#if !defined(__ANDROID__) && (!defined(__APPLE__) || defined(MLN_DARWIN_USE_LIBUV)) && __has_include(<uv.h>)
 #include <uv.h>
-#elif !defined(__APPLE__) || defined(MLN_DARWIN_USE_LIBUV)
+#elif !defined(__ANDROID__) && (!defined(__APPLE__) || defined(MLN_DARWIN_USE_LIBUV))
 struct uv_loop_s;
 using uv_loop_t = uv_loop_s;
 enum uv_run_mode { UV_RUN_DEFAULT = 0, UV_RUN_ONCE, UV_RUN_NOWAIT };
@@ -83,14 +86,18 @@ inline void currentThreadRunLoopTick() {
     // Tick can be driven through a Rust handle without constructing a renderer first.
     bindThreadRunLoop();
     threadRunLoop().runOnce();
+#if defined(__ANDROID__)
+    ALooper_pollOnce(0, nullptr, nullptr, nullptr);
+    threadRunLoop().runOnce();
+#endif
 }
 
 // Blocks the calling thread, advancing the run loop until it is woken by pending
 // work (e.g. a render or style-load completion), without busy-polling. The exact
 // primitive differs by run-loop backend (see below).
 inline void currentThreadRunLoopWait() {
-#if defined(__APPLE__) && !defined(MLN_DARWIN_USE_LIBUV)
-    // Darwin's RunLoop is CoreFoundation-based, not libuv-based: run until a
+#if defined(__ANDROID__) || (defined(__APPLE__) && !defined(MLN_DARWIN_USE_LIBUV))
+    // Android uses ALooper and Darwin uses CoreFoundation: run until a
     // completion callback calls currentThreadRunLoopStop(). (May process more
     // than one event before stopping.)
     bindThreadRunLoop();
@@ -106,13 +113,13 @@ inline void currentThreadRunLoopWait() {
 }
 
 inline void currentThreadRunLoopStop() {
-#if defined(__APPLE__) && !defined(MLN_DARWIN_USE_LIBUV)
+#if defined(__ANDROID__) || (defined(__APPLE__) && !defined(MLN_DARWIN_USE_LIBUV))
     threadRunLoop().stop();
 #endif
 }
 
 inline bool run_loop_uses_libuv() noexcept {
-#if defined(__APPLE__) && !defined(MLN_DARWIN_USE_LIBUV)
+#if defined(__ANDROID__) || (defined(__APPLE__) && !defined(MLN_DARWIN_USE_LIBUV))
     return false;
 #else
     return true;

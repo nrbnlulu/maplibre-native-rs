@@ -1,0 +1,2 @@
+# Unified diff context includes a leading space on empty lines.
+src/android/*.patch whitespace=-blank-at-eol

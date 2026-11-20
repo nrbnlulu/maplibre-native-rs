@@ -19,6 +19,9 @@
 //! To build the amalgam library [armerge](https://github.com/tux3/armerge) is required:
 //!     - `cargo install armerge`
 //!     - `sudo apt install llvm` llvm-objcopy required
+#[path = "build/android.rs"]
+mod android_platform;
+
 use downloader::{Download, Downloader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -331,6 +334,7 @@ fn build_bridge(
     include_dirs: &[PathBuf],
     backend: GraphicsApi,
     core_uses_ndebug: bool,
+    android_source: Option<&Path>,
 ) {
     // println!("cargo:warning=Include_dirs: {:?}", include_dirs);
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -347,6 +351,44 @@ fn build_bridge(
         .flag_if_supported("-fno-rtti")
         .warnings(true)
         .warnings_into_errors(true);
+
+    if let Some(native) = android_source {
+        let default = native.join("platform/default/src/mln");
+        build.include(native.join("vendor/nunicode/include"));
+        build.include(native.join("platform/android/src"));
+        build.include(native.join("vendor/maplibre-native-base/deps/jni.hpp/include"));
+        build.include(root.join("src/android"));
+        let output =
+            PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("android-platform-sources");
+        build.files(android_platform::platform_sources(native, &output));
+        let curl = pkg_config::Config::new()
+            .statik(true)
+            .cargo_metadata(false)
+            .probe("libcurl")
+            .expect("Android requires a target libcurl pkg-config configuration");
+        build.includes(curl.include_paths);
+        build.define("MBGL_USE_BUILTIN_ICU", None);
+        // These upstream platform implementations have unused parameters.
+        build.warnings_into_errors(false);
+        for source in [
+            "util/logging_stderr.cpp",
+            "util/string_stdlib.cpp",
+            "i18n/collator.cpp",
+            "i18n/number_format.cpp",
+            "text/local_glyph_rasterizer.cpp",
+        ] {
+            let source = default.join(source);
+            println!("cargo:rerun-if-changed={}", source.display());
+            build.file(source);
+        }
+        let mut support = cmake::Config::new(root.join("src/android"));
+        support.out_dir(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("android-platform"));
+        support.define("MLN_CORE_SOURCE_DIR", native);
+        support.build_target("mbgl-vendor-nunicode");
+        configure_android_cmake(&mut support);
+        let output = support.build();
+        println!("cargo:rustc-link-search=native={}", output.join("build").display());
+    }
 
     // Some public MLN types (notably RunLoop) have NDEBUG-dependent layouts.
     // Compile inline bridge code with the same ABI layout as the linked core.
@@ -479,12 +521,68 @@ fn submodule_update<P: AsRef<Path>>(repository: P) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// Resolve the NDK toolchain for both the core and the platform support library.
+fn configure_android_cmake(config: &mut cmake::Config) {
+    for variable in ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_API_LEVEL"] {
+        println!("cargo:rerun-if-env-changed={variable}");
+    }
+    let ndk = env::var_os("ANDROID_NDK_HOME")
+        .or_else(|| env::var_os("ANDROID_NDK_ROOT"))
+        .map(PathBuf::from)
+        .expect("Android builds require ANDROID_NDK_HOME or ANDROID_NDK_ROOT");
+    let toolchain = ndk.join("build/cmake/android.toolchain.cmake");
+    assert!(toolchain.is_file(), "Missing Android NDK toolchain: {}", toolchain.display());
+    let target = env::var("TARGET").expect("TARGET is set by Cargo");
+    let abi = match target.as_str() {
+        "aarch64-linux-android" => "arm64-v8a",
+        "armv7-linux-androideabi" => "armeabi-v7a",
+        "x86_64-linux-android" => "x86_64",
+        "i686-linux-android" => "x86",
+        _ => panic!("Unsupported Android target: {target}"),
+    };
+    let api = env::var("ANDROID_API_LEVEL").unwrap_or_else(|_| "24".into());
+    config
+        .generator("Ninja")
+        .define("CMAKE_TOOLCHAIN_FILE", toolchain)
+        .define("ANDROID_ABI", abi)
+        .define("ANDROID_PLATFORM", format!("android-{api}"))
+        .define("ANDROID_STL", "c++_shared");
+}
+
+/// Precompiled cores still need the matching default platform implementations.
+/// Reuse an explicit checkout, or fetch the same pinned core used by source builds.
+fn android_core_source() -> PathBuf {
+    let directory = match env::var_os("MLN_LOCAL_REPOSITORY").filter(|value| !value.is_empty()) {
+        Some(directory) => PathBuf::from(directory),
+        None => {
+            let parent = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("android-source");
+            let directory = parent.join("maplibre-native");
+            if !directory.exists() {
+                clone_repository(&parent, "maplibre-native", MLN_REPOSITORY_URL, MLN_COMMIT)
+                    .expect("Failed to fetch the Android platform sources");
+            }
+            submodule_update(&directory)
+                .expect("Failed to initialize Android platform dependencies");
+            directory
+        }
+    };
+    assert!(
+        directory.join("platform/default/src/mln").is_dir(),
+        "MLN_LOCAL_REPOSITORY must point to the matching complete MapLibre Native checkout"
+    );
+    directory
+}
+
 fn configure_local_build(
     config: &mut cmake::Config,
     api: GraphicsApi,
     amalgam_lib: bool,
     target_os: &str,
 ) {
+    if target_os == "android" {
+        configure_android_cmake(config);
+    }
+
     // maplibre-native's platform/darwin/darwin.cmake calls enable_language(Swift),
     // which the default "Unix Makefiles" generator does not support. Switch to Ninja.
     if target_os == "macos" || target_os == "ios" {
@@ -691,8 +789,7 @@ fn build_mln() {
     // Allow non-amalgamated prebuilt cores too: upstream's precompiled mode
     // force-enabled the amalgam, but the FFI-mode WebGPU core we cache is the
     // non-amalgamated archive plus its vendor libraries (linked manually below).
-    let amalgam_lib =
-        !env::var("MLN_CORE_LIBRARY_USE_AMALGAM").unwrap_or("0".to_string()).eq("0");
+    let amalgam_lib = !env::var("MLN_CORE_LIBRARY_USE_AMALGAM").unwrap_or("0".to_string()).eq("0");
     let system_lib = !env::var("MLN_SYSTEM").unwrap_or("0".to_string()).eq("0");
     let local_repository = env::var("MLN_LOCAL_REPOSITORY").unwrap_or_default();
 
@@ -769,13 +866,22 @@ fn build_mln() {
         Ok("1" | "2" | "3" | "s" | "z") => true,
         _ => env::var("PROFILE").as_deref() != Ok("debug"),
     };
+    let android_source = (target_os == "android").then(|| {
+        if precompiled {
+            android_core_source()
+        } else {
+            info.cpp_root.clone()
+        }
+    });
     build_bridge(
         &info.lib_name,
         &info.include_dirs,
         backend,
         precompiled || source_core_uses_ndebug,
+        android_source.as_deref(),
     );
     let is_apple = target_os == "macos" || target_os == "ios";
+    let is_android = target_os == "android";
     if !amalgam_lib {
         // The dependent libs are not bundled in the core lib, so we have to link manually
         // Required for mlt-cpp. Cpp root link search was already added above
@@ -797,7 +903,11 @@ fn build_mln() {
         // `fastpfor-lib` must follow it on the link line.
         println!("cargo:rustc-link-lib=mlt-cpp");
         println!("cargo:rustc-link-lib=fastpfor-lib");
-        if is_apple {
+        if is_apple || is_android {
+            if is_android {
+                println!("cargo:rustc-link-lib=mbgl-vendor-sqlite");
+                println!("cargo:rustc-link-lib=static=mbgl-vendor-nunicode");
+            }
             // darwin builds vendored ICU (system sqlite3 is linked below for all darwin builds)
             println!("cargo:rustc-link-lib=mbgl-vendor-icu");
         } else {
@@ -818,14 +928,25 @@ fn build_mln() {
             println!("cargo:rustc-link-lib=SPIRV-Tools-opt"); //sudo dnf install  spirv-tools-devel // Required by glslang spirv-tools-devel
             println!("cargo:rustc-link-lib=SPIRV-Tools"); //sudo dnf install  spirv-tools-devel // Required by glslang spirv-tools-devel
         }
-        println!("cargo:rustc-link-lib=png"); // sudo dnf install libpng-devel
-        println!("cargo:rustc-link-lib=jpeg"); // sudo dnf install libjpeg-turbo-devel
-        println!("cargo:rustc-link-lib=webp"); // sudo dnf install libwebp-devel
+        if !is_android {
+            println!("cargo:rustc-link-lib=png");
+            println!("cargo:rustc-link-lib=jpeg");
+            println!("cargo:rustc-link-lib=webp");
+        }
     }
-    if !is_apple {
-        println!("cargo:rustc-link-lib=uv"); // sudo dnf install libuv-devel
+    if !is_apple && !is_android {
+        println!("cargo:rustc-link-lib=uv");
     }
-    println!("cargo:rustc-link-lib=curl");
+    if !is_android {
+        println!("cargo:rustc-link-lib=curl");
+    } else {
+        pkg_config::Config::new()
+            .statik(true)
+            .probe("libcurl")
+            .expect("Android curl SDK is required");
+        println!("cargo:rustc-link-lib=android");
+        println!("cargo:rustc-link-lib=log");
+    }
     println!("cargo:rustc-link-lib=z");
 
     if is_apple {
