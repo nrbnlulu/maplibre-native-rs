@@ -51,6 +51,8 @@ wgpu = { workspace = true, optional = true }
 
 [build-dependencies]
 pkg-config = "0.3"
+sha256 = { version = "1.6", default-features = false }
+tempfile = "3"
 cmake.workspace = true
 cxx-build.workspace = true
 downloader.workspace = true

@@ -42,7 +42,13 @@ CMake selects the Android ABI from Cargo's target and uses `ANDROID_API_LEVEL`
 Linux core archive to an Android build. The embedding APK must package a matching
 `libc++_shared.so`.
 
-For a precompiled core, set `MLN_PRECOMPILE=1`,
+For Android ARM64 (`aarch64-linux-android`) with the `wgpu` backend, Cargo's
+build script downloads and verifies the pinned API 24 release bundle by default.
+It caches the extracted core in Cargo's build output, or at the absolute path
+set by `MLN_CORE_CACHE_DIR` for sharing across builds. `MLN_PRECOMPILE=0` opts
+out of the download and builds the core from source.
+
+To supply your own precompiled core, set `MLN_PRECOMPILE=1`,
 `MLN_CORE_LIBRARY_USE_AMALGAM=0`, `MLN_CORE_LIBRARY_PATH` and
 `MLN_CORE_LIBRARY_HEADERS_PATH`, plus the usual WebGPU/internal header paths.
 The Android support layer also needs the matching full core sources. Set

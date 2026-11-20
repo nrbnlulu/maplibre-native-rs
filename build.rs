@@ -21,6 +21,8 @@
 //!     - `sudo apt install llvm` llvm-objcopy required
 #[path = "build/android.rs"]
 mod android_platform;
+#[path = "build/released_core.rs"]
+mod released_core;
 
 use downloader::{Download, Downloader};
 use std::path::{Path, PathBuf};
@@ -264,7 +266,7 @@ fn extract_headers(headers_from: &Path, headers_to: &Path) {
 /// Get local directory or download maplibre-native into the `OUT_DIR`
 ///
 /// Returns the path to the maplibre-native directory and the include directories.
-fn resolve_mln_core() -> (PathBuf, Vec<PathBuf>) {
+fn resolve_mln_core(released: Option<&Path>) -> (PathBuf, Vec<PathBuf>) {
     let out_dir =
         PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set")).join("maplibre-native");
     let mln_release = determine_cargo_toml_information().mln_release;
@@ -280,8 +282,11 @@ fn resolve_mln_core() -> (PathBuf, Vec<PathBuf>) {
     },
       (Some(_), None) => panic!("MLN_CORE_LIBRARY_HEADERS_PATH is not set. To compile from a local library/headers, both MLN_CORE_LIBRARY_PATH and MLN_CORE_LIBRARY_HEADERS_PATH must be set."),
       (None, Some(_)) => panic!("MLN_CORE_LIBRARY_PATH is not set. To compile from a local library/headers, both MLN_CORE_LIBRARY_PATH and MLN_CORE_LIBRARY_HEADERS_PATH must be set."),
-      // Default => to downloading the static library
-    (None, None) => download_static(&out_dir, &mln_release),
+      (None, None) if released.is_some() => {
+          let dir = released.expect("released core directory");
+          (dir.join("libmbgl-core.a"), dir.join("maplibre-native-headers.tar.gz"))
+      }
+      (None, None) => download_static(&out_dir, &mln_release),
      };
     assert!(
         library_file.is_file(),
@@ -322,8 +327,11 @@ fn resolve_mln_core() -> (PathBuf, Vec<PathBuf>) {
     // the cxx bridge still needs (e.g. mln/gfx/offscreen_texture.hpp). Allow a
     // cached copy of that directory to be supplied for precompiled builds.
     println!("cargo:rerun-if-env-changed=MLN_CORE_SRC_INCLUDE_DIR");
-    if let Some(dir) = env::var_os("MLN_CORE_SRC_INCLUDE_DIR") {
-        include_dirs.push(PathBuf::from(dir));
+    if let Some(dir) = env::var_os("MLN_CORE_SRC_INCLUDE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| released.map(|dir| dir.join("src")))
+    {
+        include_dirs.push(dir);
     }
     (library_file, include_dirs)
 }
@@ -335,6 +343,7 @@ fn build_bridge(
     backend: GraphicsApi,
     core_uses_ndebug: bool,
     android_source: Option<&Path>,
+    released: Option<&Path>,
 ) {
     // println!("cargo:warning=Include_dirs: {:?}", include_dirs);
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -418,8 +427,11 @@ fn build_bridge(
             // directory; the precompiled path reads the cached copy supplied
             // via MLN_WEBGPU_CPP_INCLUDE_DIR.
             println!("cargo:rerun-if-env-changed=MLN_WEBGPU_CPP_INCLUDE_DIR");
-            if let Some(dir) = env::var_os("MLN_WEBGPU_CPP_INCLUDE_DIR") {
-                build.include(PathBuf::from(dir));
+            if let Some(dir) = env::var_os("MLN_WEBGPU_CPP_INCLUDE_DIR")
+                .map(PathBuf::from)
+                .or_else(|| released.map(|dir| dir.join("webgpu-cpp")))
+            {
+                build.include(dir);
             }
             // The shim supplies the flat <webgpu.h> some headers include.
             build.include(PathBuf::from(webgpu_shim::WEBGPU_HEADER_INCLUDE_DIR));
@@ -462,8 +474,8 @@ struct Info {
     cpp_root: PathBuf,
 }
 
-fn bundle_precompiled() -> Info {
-    let (cpp_root, include_dirs) = resolve_mln_core();
+fn bundle_precompiled(released: Option<&Path>) -> Info {
+    let (cpp_root, include_dirs) = resolve_mln_core(released);
 
     println!(
         "cargo:warning=Using precompiled maplibre-native static library from {}",
@@ -784,14 +796,29 @@ fn build_mln() {
     println!("cargo:rerun-if-env-changed=MLN_PRECOMPILE");
     println!("cargo:rerun-if-env-changed=MLN_CORE_LIBRARY_USE_AMALGAM");
     println!("cargo:rerun-if-env-changed=MLN_LOCAL_REPOSITORY");
+    println!("cargo:rerun-if-env-changed=MLN_CORE_LIBRARY_PATH");
+    println!("cargo:rerun-if-env-changed=MLN_CORE_LIBRARY_HEADERS_PATH");
 
-    let precompiled = !env::var("MLN_PRECOMPILE").unwrap_or("0".to_string()).eq("0");
     // Allow non-amalgamated prebuilt cores too: upstream's precompiled mode
     // force-enabled the amalgam, but the FFI-mode WebGPU core we cache is the
     // non-amalgamated archive plus its vendor libraries (linked manually below).
     let amalgam_lib = !env::var("MLN_CORE_LIBRARY_USE_AMALGAM").unwrap_or("0".to_string()).eq("0");
     let system_lib = !env::var("MLN_SYSTEM").unwrap_or("0".to_string()).eq("0");
     let local_repository = env::var("MLN_LOCAL_REPOSITORY").unwrap_or_default();
+    let backend = GraphicsApi::from_selected_features();
+    let target = env::var("TARGET").expect("TARGET is set by Cargo");
+    let release = if backend == GraphicsApi::WGPU
+        && !amalgam_lib
+        && !system_lib
+        && env::var_os("MLN_CORE_LIBRARY_PATH").is_none()
+        && env::var_os("MLN_CORE_LIBRARY_HEADERS_PATH").is_none()
+    {
+        released_core::Bundle::for_target(&target)
+    } else {
+        None
+    };
+    let precompiled = env::var("MLN_PRECOMPILE")
+        .map_or(release.is_some(), |value| value != "0");
 
     if !local_repository.is_empty() {
         println!("cargo:warning=Using local repository from: {local_repository}");
@@ -828,8 +855,15 @@ fn build_mln() {
         }
     }
 
+    let released = if precompiled {
+        release.map(|bundle| {
+            bundle.install().expect("Failed to prepare released MapLibre core")
+        })
+    } else {
+        None
+    };
     let info = if precompiled {
-        bundle_precompiled()
+        bundle_precompiled(released.as_deref())
     } else if system_lib {
         // Using pkg config
         // let mut cfg = pkg_config::Config::new();
@@ -860,7 +894,6 @@ fn build_mln() {
         }
     };
 
-    let backend = GraphicsApi::from_selected_features();
     let source_core_uses_ndebug = match env::var("OPT_LEVEL").as_deref() {
         Ok("0") => false,
         Ok("1" | "2" | "3" | "s" | "z") => true,
@@ -879,6 +912,7 @@ fn build_mln() {
         backend,
         precompiled || source_core_uses_ndebug,
         android_source.as_deref(),
+        released.as_deref(),
     );
     let is_apple = target_os == "macos" || target_os == "ios";
     let is_android = target_os == "android";
